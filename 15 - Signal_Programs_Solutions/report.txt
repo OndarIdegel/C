@@ -1,0 +1,457 @@
+Отчет по лабораторной работе
+"Работа с сигналами"
+
+Содержание:
+1. Введение
+2. Задание 1: Обработка сигнала (аналог SIGUSR1)
+3. Задание 2: Блокировка сигнала (аналог SIGINT)
+4. Задание 3: Event-loop с ожиданием сигнала (аналог sigwait)
+5. Особенности портирования POSIX-сигналов в Windows
+6. Тестирование программ
+7. Заключение
+
+
+
+1. Введение
+
+Данная лабораторная работа посвящена реализации программ для работы с сигналами в операционной системе Windows. Поскольку Windows не поддерживает напрямую POSIX-сигналы, используемые в UNIX-подобных системах, в работе представлены аналоги с использованием механизмов Windows API.
+
+Основные задачи:
+- Реализация обработчика сигнала (аналог SIGUSR1)
+- Реализация блокировки сигнала (аналог SIGINT)
+- Реализация event-loop с ожиданием сигнала (аналог sigwait)
+- Реализация программы для отправки сигнала (аналог kill)
+
+Все программы разработаны на языке C для платформы Windows и совместимы с Visual Studio 17.
+
+
+
+2. Задание 1: Обработка сигнала (аналог SIGUSR1)
+
+В UNIX-подобных системах функция sigaction() используется для переопределения диспозиции сигнала SIGUSR1. В Windows нет прямого аналога SIGUSR1, поэтому для реализации этой функциональности используются именованные события (Named Events).
+
+ Описание решения
+
+Программа создает именованное событие, которое будет использоваться как аналог сигнала SIGUSR1. Затем запускается отдельный поток, который ожидает активации этого события. При активации события (получении "сигнала") программа выводит сообщение о получении сигнала и сбрасывает событие для следующего использования.
+
+ Особенности реализации
+
+- Вместо SIGUSR1 используется именованное событие Windows (Named Event)
+- Вместо функции sigaction() используется CreateThread() с функцией-обработчиком
+- Для ожидания сигнала используется WaitForSingleObject()
+- Для сброса сигнала используется ResetEvent()
+
+ Исходный код
+
+c
+/
+ Task 1: Signal Handler Program
+ 
+ This program redefines the disposition of a signal (equivalent to SIGUSR1 in UNIX)
+ using Windows-specific mechanisms, then enters an infinite waiting loop.
+ When the signal is received, it displays a message.
+ 
+ Windows adaptation: Since Windows doesn't have direct POSIX signal equivalents,
+ we use Windows events for inter-process communication.
+/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+#define EVENT_NAME "Global\\SIGUSR1_Event"
+
+// Global handle to the event
+HANDLE g_hEvent = NULL;
+
+// Signal handler function (equivalent to SIGUSR1 handler)
+DWORD WINAPI SignalHandlerThread(LPVOID lpParam) {
+    while (1) {
+        // Wait for the event to be signaled
+        WaitForSingleObject(g_hEvent, INFINITE);
+        
+        // Display message when signal is received
+        printf("Signal received: SIGUSR1 equivalent\n");
+        
+        // Reset the event for the next signal
+        ResetEvent(g_hEvent);
+    }
+    
+    return 0;
+}
+
+int main() {
+    DWORD threadId;
+    HANDLE hThread;
+    
+    // Create or open a named event (equivalent to setting up a signal handler)
+    g_hEvent = CreateEvent(
+        NULL,               // Default security attributes
+        TRUE,               // Manual reset event
+        FALSE,              // Initial state is non-signaled
+        TEXT(EVENT_NAME)    // Event name
+    );
+    
+    if (g_hEvent == NULL) {
+        printf("CreateEvent failed (%d)\n", GetLastError());
+        return 1;
+    }
+    
+    printf("Signal handler program started.\n");
+    printf("Process ID: %lu\n", GetCurrentProcessId());
+    printf("Waiting for signals...\n");
+    printf("(Press Ctrl+C to exit)\n");
+    
+    // Create a thread to handle the signal (equivalent to sigaction handler)
+    hThread = CreateThread(
+        NULL,                   // Default security attributes
+        0,                      // Default stack size
+        SignalHandlerThread,    // Thread function
+        NULL,                   // No thread function arguments
+        0,                      // Default creation flags
+        &threadId               // Receive thread identifier
+    );
+    
+    if (hThread == NULL) {
+        printf("CreateThread failed (%d)\n", GetLastError());
+        CloseHandle(g_hEvent);
+        return 1;
+    }
+    
+    // Infinite loop (equivalent to the waiting loop in the UNIX version)
+    while (1) {
+        Sleep(1000); // Sleep to reduce CPU usage
+    }
+    
+    // Cleanup (this code is never reached in normal operation)
+    CloseHandle(hThread);
+    CloseHandle(g_hEvent);
+    
+    return 0;
+}
+
+
+ Программа для отправки сигнала (аналог kill)
+
+Для отправки сигнала другой программе реализована отдельная программа, которая открывает именованное событие и активирует его, что эквивалентно отправке сигнала SIGUSR1 в UNIX.
+
+c
+/
+ Signal Sender Program
+ 
+ This program sends a signal (equivalent to SIGUSR1 in UNIX) to another process
+ using Windows-specific mechanisms.
+ 
+ Windows adaptation: Since Windows doesn't have direct POSIX signal equivalents,
+ we use Windows events for inter-process communication.
+/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+#define EVENT_NAME "Global\\SIGUSR1_Event"
+
+int main(int argc, char* argv[]) {
+    HANDLE hEvent;
+    DWORD targetPid;
+    
+    // Check if target process ID was provided
+    if (argc < 2) {
+        printf("Usage: %s <target_process_id>\n", argv[0]);
+        return 1;
+    }
+    
+    // Get target process ID from command line
+    targetPid = (DWORD)atoi(argv[1]);
+    if (targetPid == 0) {
+        printf("Invalid process ID\n");
+        return 1;
+    }
+    
+    // Open the named event
+    hEvent = OpenEvent(
+        EVENT_MODIFY_STATE,    // Need permission to set the event
+        FALSE,                 // Don't need to inherit handle
+        TEXT(EVENT_NAME)       // Event name
+    );
+    
+    if (hEvent == NULL) {
+        printf("OpenEvent failed (%d). Make sure the target process is running.\n", GetLastError());
+        return 1;
+    }
+    
+    // Set the event (equivalent to sending SIGUSR1)
+    if (!SetEvent(hEvent)) {
+        printf("SetEvent failed (%d)\n", GetLastError());
+        CloseHandle(hEvent);
+        return 1;
+    }
+    
+    printf("Signal sent to process %lu\n", targetPid);
+    
+    // Cleanup
+    CloseHandle(hEvent);
+    
+    return 0;
+}
+
+
+
+
+3. Задание 2: Блокировка сигнала (аналог SIGINT)
+
+В UNIX-подобных системах функция sigprocmask() используется для блокировки сигналов, в том числе SIGINT (Ctrl+C). В Windows для обработки Ctrl+C используется функция SetConsoleCtrlHandler().
+
+ Описание решения
+
+Программа устанавливает обработчик для консольных событий (Console Control Handler), который перехватывает событие Ctrl+C (CTRL_C_EVENT). Когда пользователь нажимает Ctrl+C, обработчик проверяет глобальный флаг блокировки и, если сигнал заблокирован, выводит сообщение и продолжает работу программы.
+
+ Особенности реализации
+
+- Вместо sigprocmask() используется SetConsoleCtrlHandler()
+- Для блокировки SIGINT (Ctrl+C) используется глобальный флаг и обработчик событий
+- Программа может быть завершена только через Task Manager или другие внешние средства
+
+ Исходный код
+
+c
+/
+ Task 2: Signal Blocking Program
+ 
+ This program blocks a signal (equivalent to SIGINT in UNIX)
+ using Windows-specific mechanisms, then enters an infinite loop.
+ 
+ Windows adaptation: Since Windows doesn't have direct POSIX signal equivalents,
+ we use a custom handler for console control events (Ctrl+C) to simulate
+ signal blocking behavior.
+/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+// Global flag to indicate if SIGINT (Ctrl+C) is blocked
+static BOOL g_bSigintBlocked = TRUE;
+
+// Custom handler for console control events (Ctrl+C, Ctrl+Break, etc.)
+BOOL WINAPI ConsoleCtrlHandler(DWORD dwCtrlType) {
+    switch (dwCtrlType) {
+        case CTRL_C_EVENT:
+            // If SIGINT is blocked, ignore the event
+            if (g_bSigintBlocked) {
+                printf("SIGINT (Ctrl+C) received but blocked\n");
+                return TRUE; // Event handled, don't call default handler
+            }
+            return FALSE; // Not handled, call default handler
+            
+        case CTRL_BREAK_EVENT:
+        case CTRL_CLOSE_EVENT:
+        case CTRL_LOGOFF_EVENT:
+        case CTRL_SHUTDOWN_EVENT:
+            return FALSE; // Not handled, call default handler
+    }
+    
+    return FALSE;
+}
+
+int main() {
+    // Set up the control handler (equivalent to sigprocmask)
+    if (!SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE)) {
+        printf("SetConsoleCtrlHandler failed (%d)\n", GetLastError());
+        return 1;
+    }
+    
+    printf("Signal blocking program started.\n");
+    printf("Process ID: %lu\n", GetCurrentProcessId());
+    printf("SIGINT (Ctrl+C) is blocked.\n");
+    printf("Press Ctrl+C to test blocking.\n");
+    printf("(Use Task Manager to terminate this program)\n");
+    
+    // Infinite loop (equivalent to the waiting loop in the UNIX version)
+    while (1) {
+        Sleep(1000); // Sleep to reduce CPU usage
+    }
+    
+    // This code is never reached in normal operation
+    return 0;
+}
+
+
+
+
+4. Задание 3: Event-loop с ожиданием сигнала (аналог sigwait)
+
+В UNIX-подобных системах функция sigwait() используется для ожидания сигналов в цикле обработки событий (event-loop). В Windows для этой цели можно использовать функцию WaitForSingleObject() с именованным событием.
+
+ Описание решения
+
+Программа создает именованное событие и входит в бесконечный цикл, в котором ожидает активации этого события. При активации события (получении "сигнала") программа выводит сообщение о получении сигнала, сбрасывает событие и продолжает цикл.
+
+ Особенности реализации
+
+- Вместо sigwait() используется WaitForSingleObject()
+- Для ожидания сигнала используется именованное событие Windows
+- Для сброса сигнала используется ResetEvent()
+
+ Исходный код
+
+c
+/
+ Task 3: Event Loop with Signal Wait
+ 
+ This program implements an event loop using a mechanism similar to sigwait() in UNIX.
+ It blocks a signal (equivalent to SIGUSR1 in UNIX) and waits for it in a loop.
+ When the signal is received, it displays a message and continues the loop.
+ 
+ Windows adaptation: Since Windows doesn't have direct POSIX signal equivalents,
+ we use Windows events for inter-process communication and WaitForSingleObject
+ as an equivalent to sigwait().
+/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+#define EVENT_NAME "Global\\SIGUSR1_Event"
+
+int main() {
+    HANDLE hEvent;
+    DWORD waitResult;
+    
+    // Create or open a named event (equivalent to setting up a signal)
+    hEvent = CreateEvent(
+        NULL,               // Default security attributes
+        TRUE,               // Manual reset event
+        FALSE,              // Initial state is non-signaled
+        TEXT(EVENT_NAME)    // Event name
+    );
+    
+    if (hEvent == NULL) {
+        printf("CreateEvent failed (%d)\n", GetLastError());
+        return 1;
+    }
+    
+    printf("Event loop program started.\n");
+    printf("Process ID: %lu\n", GetCurrentProcessId());
+    printf("Waiting for signals in event loop...\n");
+    printf("(Press Ctrl+C to exit)\n");
+    
+    // Event loop (equivalent to the sigwait loop in the UNIX version)
+    while (1) {
+        // Wait for the event to be signaled (equivalent to sigwait)
+        waitResult = WaitForSingleObject(hEvent, INFINITE);
+        
+        if (waitResult == WAIT_OBJECT_0) {
+            // Signal received
+            printf("Signal received: SIGUSR1 equivalent\n");
+            
+            // Reset the event for the next signal
+            ResetEvent(hEvent);
+        }
+        else {
+            // Error occurred
+            printf("WaitForSingleObject failed (%d)\n", GetLastError());
+            break;
+        }
+    }
+    
+    // Cleanup
+    CloseHandle(hEvent);
+    
+    return 0;
+}
+
+
+
+
+5. Особенности портирования POSIX-сигналов в Windows
+
+При портировании программ, использующих POSIX-сигналы, на платформу Windows необходимо учитывать следующие особенности:
+
+ Различия в механизмах обработки сигналов
+
+| POSIX (UNIX) | Windows | Комментарий |
+|--||-|
+| SIGUSR1, SIGUSR2 | Именованные события (Named Events) | В Windows нет пользовательских сигналов, поэтому используются именованные события |
+| SIGINT (Ctrl+C) | CTRL_C_EVENT | Windows предоставляет обработчик консольных событий |
+| sigaction() | SetConsoleCtrlHandler(), CreateThread() | Для обработки сигналов в Windows используются разные механизмы |
+| sigprocmask() | Пользовательская реализация с флагами | Windows не имеет прямого аналога блокировки сигналов |
+| sigwait() | WaitForSingleObject() | Для ожидания событий в Windows используется другой API |
+| kill() | SetEvent() | Для отправки "сигналов" используется активация событий |
+
+ Именованные события в Windows
+
+Именованные события (Named Events) в Windows - это объекты ядра, которые могут быть использованы для синхронизации между процессами. Они имеют следующие особенности:
+
+- Могут быть созданы с глобальным именем, доступным для всех процессов
+- Имеют два состояния: сигнальное (signaled) и несигнальное (non-signaled)
+- Могут быть автоматически или вручную сбрасываемыми (auto-reset или manual-reset)
+- Для ожидания события используется WaitForSingleObject() или WaitForMultipleObjects()
+- Для активации события используется SetEvent()
+- Для сброса события используется ResetEvent()
+
+ Обработка консольных событий в Windows
+
+Windows предоставляет механизм обработки консольных событий через функцию SetConsoleCtrlHandler(). Этот механизм позволяет:
+
+- Перехватывать события Ctrl+C, Ctrl+Break и другие
+- Определять пользовательские обработчики для этих событий
+- Блокировать стандартное поведение (завершение программы)
+- Выполнять пользовательский код при получении события
+
+ Многопоточность вместо обработчиков сигналов
+
+В UNIX обработчики сигналов выполняются в контексте прерванного процесса. В Windows часто используется многопоточность для эмуляции этого поведения:
+
+- Создается отдельный поток для ожидания и обработки событий
+- Основной поток продолжает выполнение программы
+- Взаимодействие между потоками осуществляется через общие переменные или объекты синхронизации
+
+
+
+6. Тестирование программ
+
+ Методика тестирования
+
+Для проверки корректности работы программ были проведены следующие тесты:
+
+# Тест 1: Обработка сигнала (Task1 + SignalSender)
+1. Запущена программа `signal_handler.c` (Task1)
+2. Запомнен отображаемый Process ID
+3. Запущена программа `signal_sender.c` с указанным Process ID
+4. Проверено, что программа-обработчик выводит сообщение о получении сигнала
+
+# Тест 2: Блокировка сигнала (Task2)
+1. Запущена программа `signal_blocking.c` (Task2)
+2. Нажат Ctrl+C несколько раз
+3. Проверено, что программа продолжает работу и выводит сообщение о блокировке сигнала
+4. Программа завершена через Task Manager
+
+# Тест 3: Event-loop с ожиданием сигнала (Task3 + SignalSender)
+1. Запущена программа `event_loop.c` (Task3)
+2. Запомнен отображаемый Process ID
+3. Запущена программа `signal_sender.c` с указанным Process ID несколько раз
+4. Проверено, что программа event-loop выводит сообщение о получении сигнала после каждой отправки
+
+ Результаты тестирования
+
+Все программы работают корректно и выполняют свои функции в соответствии с заданием. Особенности работы в Windows:
+
+- Для корректной работы именованных событий может потребоваться запуск программ с правами администратора
+- Программа блокировки сигнала (Task2) успешно игнорирует Ctrl+C и продолжает работу
+- Программы обработки сигналов (Task1 и Task3) корректно получают и обрабатывают сигналы, отправленные через программу SignalSender
+
+
+
+7. Заключение
+
+В данной лабораторной работе были успешно реализованы программы для работы с сигналами в операционной системе Windows. Несмотря на отсутствие прямой поддержки POSIX-сигналов в Windows, были найдены и использованы аналогичные механизмы, которые позволяют достичь схожей функциональности.
+
+Основные выводы:
+- Windows предоставляет альтернативные механизмы для работы с сигналами, такие как именованные события и обработчики консольных событий
+- Для эмуляции POSIX-сигналов в Windows требуется использование различных API в зависимости от типа сигнала
+- Многопоточность в Windows может использоваться для реализации обработчиков сигналов
+- Программы, использующие сигналы, могут быть успешно портированы с UNIX на Windows с учетом особенностей платформы
+
+Все программы были успешно протестированы и работают корректно в среде Windows с использованием Visual Studio 17.
