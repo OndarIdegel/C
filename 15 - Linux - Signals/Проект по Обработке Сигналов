@@ -1,0 +1,266 @@
+Проект по Обработке Сигналов
+
+Обзор Проекта
+
+Этот проект реализует различные механизмы обработки сигналов на языке C в среде Linux. Он охватывает три отдельные задачи:
+
+1. Обработка сигнала SIGUSR1: Демонстрирует, как переопределить диспозицию сигнала SIGUSR1 с помощью sigaction() в программе-приемнике и как отправить этот сигнал с помощью kill() из отдельной программы-отправителя. Также рассматривается отправка сигналов с помощью утилиты kill.
+
+2. Блокировка сигнала SIGINT: Показывает, как заблокировать сигнал SIGINT (обычно генерируемый Ctrl+C) с помощью sigprocmask() и проверяет его функциональность с использованием программы-отправителя из Задачи 1 и утилиты kill.
+
+3. Цикл событий с sigwait(): Реализует цикл событий, который блокирует SIGUSR1 и ожидает его доставки с помощью sigwait(), выводя сообщение при получении сигнала и продолжая цикл. Это также тестируется с программой-отправителем и утилитой kill.
+
+Результаты
+
+• Исодный код для всех программ.
+
+• Скомпилированные исполняемые файлы.
+
+• Подробная документация по компиляции, выполнению и тестированию для каждой задачи.
+
+Среда
+
+• Операционная система: Linux (Ubuntu 22.04)
+
+• Компилятор: GCC
+
+Инструкции по Использованию
+
+Подробные инструкции по компиляции и запуску каждой программы, а также ожидаемые выходные данные и процедуры тестирования будут представлены в последующих разделах этого README.
+
+Задача 1: Обработка сигнала SIGUSR1
+
+Программа: receiver_sigusr1.c
+
+Эта программа демонстрирует, как переопределить диспозицию сигнала SIGUSR1 с помощью системного вызова sigaction(). При получении сигнала SIGUSR1 она выводит сообщение на консоль. Затем программа входит в бесконечный цикл, ожидая сигналов.
+
+Исходный код (receiver_sigusr1.c):
+
+Plain Text
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+
+void sigusr1_handler(int signo) {
+    printf("Received SIGUSR1 signal!\n");
+    fflush(stdout);
+}
+
+int main() {
+    struct sigaction sa;
+
+    sa.sa_handler = sigusr1_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("SIGUSR1 receiver program started. PID: %d\n", getpid());
+    fflush(stdout);
+    printf("Waiting for SIGUSR1 signal...\n");
+    fflush(stdout);
+
+    while (1) {
+        sleep(1);
+    }
+
+    return 0;
+}
+
+
+Программа: sender_sigusr1.c
+
+Эта программа отправляет указанный сигнал указанному идентификатору процесса (PID) с помощью системного вызова kill(). Она принимает целевой PID в качестве аргумента командной строки и, опционально, имя сигнала.
+
+Исходный код (sender_sigusr1.c):
+
+Plain Text
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char *argv[]) {
+    if (argc < 2 || argc > 4) {
+        fprintf(stderr, "Usage: %s <pid> [-s <signal_name>]\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    pid_t pid = atoi(argv[1]);
+    int signo = SIGUSR1; // Default signal
+
+    if (argc == 4) {
+        if (strcmp(argv[2], "-s") == 0) {
+            if (strcmp(argv[3], "SIGINT") == 0) {
+                signo = SIGINT;
+            } else if (strcmp(argv[3], "SIGUSR1") == 0) {
+                signo = SIGUSR1;
+            } else {
+                fprintf(stderr, "Unsupported signal: %s\n", argv[3]);
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            fprintf(stderr, "Usage: %s <pid> [-s <signal_name>]\n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    if (kill(pid, signo) == -1) {
+        perror("kill");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Sent signal %d to PID %d\n", signo, pid);
+
+    return 0;
+}
+
+Компиляция и Выполнение:
+
+1. Компиляция:
+
+2. Запуск receiver_sigusr1: Откройте терминал и запустите:
+
+3. Запуск sender_sigusr1: Откройте другой терминал и запустите, заменив <PID> на PID из шага 2:
+
+Использование утилиты kill:
+
+В качестве альтернативы вы можете отправить сигнал SIGUSR1 с помощью утилиты командной строки kill. Замените <PID> на PID receiver_sigusr1:
+
+Bash
+
+
+kill -USR1 <PID>
+
+
+Задача 2: Блокировка сигнала SIGINT
+
+Программа: block_sigint.c
+
+Эта программа демонстрирует, как заблокировать сигнал SIGINT (обычно генерируемый Ctrl+C) с помощью sigprocmask(). После блокировки программа будет продолжать работать в бесконечном цикле, игнорируя сигналы SIGINT.
+
+Исходный код (block_sigint.c):
+
+Plain Text
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+
+int main() {
+    sigset_t new_mask, old_mask;
+
+    // Инициализируем набор сигналов и добавляем в него SIGINT
+    sigemptyset(&new_mask);
+    sigaddset(&new_mask, SIGINT);
+
+    // Блокируем SIGINT
+    if (sigprocmask(SIG_BLOCK, &new_mask, &old_mask) == -1) {
+        perror("sigprocmask");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Программа блокировки SIGINT запущена. PID: %d\n", getpid());
+    fflush(stdout);
+    printf("SIGINT теперь заблокирован. Попробуйте нажать Ctrl+C.\n");
+    fflush(stdout);
+
+    while (1) {
+        sleep(1);
+    }
+
+    return 0;
+}
+
+Компиляция и Выполнение:
+
+1. Компиляция:
+
+2. Запуск block_sigint: Откройте терминал и запустите:
+
+3. Тестирование с Ctrl+C: Нажмите Ctrl+C в терминале, где запущена block_sigint. Вы увидите, что программа не завершается, что указывает на блокировку SIGINT.
+
+4. Тестирование с sender_sigusr1 (или утилитой kill): Вы можете использовать программу sender_sigusr1 (или утилиту kill) для отправки SIGINT в block_sigint. Замените <PID> на PID block_sigint:
+
+Задача 3: Цикл событий с sigwait()
+
+Программа: event_loop_sigwait.c
+
+Эта программа реализует цикл событий, который использует sigwait() для ожидания определенных сигналов. Она блокирует SIGUSR1, а затем входит в цикл, выводя сообщение при получении SIGUSR1 и переходя к следующей итерации.
+
+Исходный код (event_loop_sigwait.c):
+
+Plain Text
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+
+int main() {
+    sigset_t mask;
+    int signo;
+
+    // Инициализируем набор сигналов и добавляем в него SIGUSR1
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+
+    // Блокируем SIGUSR1
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
+        perror("sigprocmask");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Цикл событий с sigwait() запущен. PID: %d\n", getpid());
+    fflush(stdout);
+    printf("SIGUSR1 заблокирован. Ожидание SIGUSR1...\n");
+    fflush(stdout);
+
+    while (1) {
+        // Ожидаем сигнал, указанный в \'mask\'
+        if (sigwait(&mask, &signo) == -1) {
+            perror("sigwait");
+            exit(EXIT_FAILURE);
+        }
+
+        if (signo == SIGUSR1) {
+            printf("Получен сигнал SIGUSR1 в цикле событий!\n");
+            fflush(stdout);
+        }
+    }
+
+    return 0;
+}
+
+Компиляция и Выполнение:
+
+1. Компиляция:
+
+2. Запуск event_loop_sigwait: Откройте терминал и запустите:
+
+3. Тестирование с sender_sigusr1 (или утилитой kill): Используйте программу sender_sigusr1 (или утилиту kill) для отправки SIGUSR1 в event_loop_sigwait. Замените <PID> на PID event_loop_sigwait:
+
+Результаты
+
+По завершении будут предоставлены следующие результаты:
+
+• Исходный код: Все исходные файлы .c для реализованных программ (receiver_sigusr1.c, sender_sigusr1.c, block_sigint.c, event_loop_sigwait.c).
+
+• Скомпилированные исполняемые файлы: Скомпилированные бинарные исполняемые файлы для каждой программы.
+
+• Подробный README.md: Этот документ, подробно описывающий обзор проекта, исходный код, инструкции по компиляции, шаги выполнения и процедуры тестирования для каждой задачи.
+
+Этот проект представляет собой практическую демонстрацию фундаментальных концепций обработки сигналов в Linux, необходимых для надежного системного программирования.
+
